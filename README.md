@@ -1,2 +1,0 @@
-# Strategy-Journal
-Trading
