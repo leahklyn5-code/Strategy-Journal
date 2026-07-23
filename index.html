@@ -34,11 +34,22 @@ function calcRR(entry,sl,tp){
   if(!e||!s||!t||e===s)return null;
   return Math.abs(t-e)/Math.abs(e-s);
 }
-function calcPnlR(entry,sl,tp,outcome){
+function calcTrailR(entry,sl,trailPrice){
+  const e=parseFloat(entry),s=parseFloat(sl),trp=parseFloat(trailPrice);
+  if(!e||!s||e===s||(!trp&&trp!==0))return null;
+  const risk=Math.abs(e-s),isLong=e>s;
+  return isLong?(trp-e)/risk:(e-trp)/risk;
+}
+function calcPnlR(entry,sl,tp,outcome,trailPrice){
   const rr=calcRR(entry,sl,tp);
   if(outcome==="Win"){if(rr===null)return null;return+rr.toFixed(2);}
   if(outcome==="Loss")return -1;
   if(outcome==="BE Stopped")return+(PARTIAL_PCT*BE_TRIGGER_R).toFixed(2);
+  if(outcome==="Trailed Stop"){
+    const remainR=calcTrailR(entry,sl,trailPrice);
+    if(remainR===null)return null;
+    return+(PARTIAL_PCT*BE_TRIGGER_R+REMAIN_PCT*remainR).toFixed(2);
+  }
   if(outcome==="BE → TP"){if(rr===null)return null;return+(PARTIAL_PCT*BE_TRIGGER_R+REMAIN_PCT*rr).toFixed(2);}
   return null;
 }
@@ -53,15 +64,16 @@ function getMonthKey(d){const dt=new Date(d);return`${dt.getFullYear()}-${String
 function fmtMonth(key){const[y,m]=key.split("-");return new Date(y,parseInt(m)-1).toLocaleDateString("en-GB",{month:"long",year:"numeric"});}
 function fmtDate(d){return new Date(d).toLocaleDateString("en-GB",{day:"2-digit",month:"short",year:"numeric"});}
 
-const CLRS={green:{bg:"#052e16",bd:"#16a34a",tx:"#4ade80"},teal:{bg:"#022c22",bd:"#10b981",tx:"#6ee7b7"},red:{bg:"#2d0a0a",bd:"#dc2626",tx:"#f87171"},yellow:{bg:"#1c1400",bd:"#ca8a04",tx:"#facc15"},blue:{bg:"#0c1a2e",bd:"#2563eb",tx:"#60a5fa"},gray:{bg:"#111827",bd:"#374151",tx:"#9ca3af"}};
+const CLRS={green:{bg:"#052e16",bd:"#16a34a",tx:"#4ade80"},teal:{bg:"#022c22",bd:"#10b981",tx:"#6ee7b7"},red:{bg:"#2d0a0a",bd:"#dc2626",tx:"#f87171"},yellow:{bg:"#1c1400",bd:"#ca8a04",tx:"#facc15"},blue:{bg:"#0c1a2e",bd:"#2563eb",tx:"#60a5fa"},purple:{bg:"#1e1b3a",bd:"#818cf8",tx:"#a5b4fc"},gray:{bg:"#111827",bd:"#374151",tx:"#9ca3af"}};
 const OUTCOME_CONFIG=[
   {id:"Win",label:"Win",sub:"Full TP · no partial taken",bg:"#052e16",bd:"#16a34a",tx:"#4ade80",requiresPartial:false},
   {id:"Loss",label:"Loss",sub:"SL hit · -1R",bg:"#2d0a0a",bd:"#dc2626",tx:"#f87171",requiresPartial:false},
-  {id:"BE Stopped",label:"BE Stopped",sub:"Partial taken, rest stopped at BE",bg:"#1c1400",bd:"#ca8a04",tx:"#facc15",requiresPartial:true},
+  {id:"BE Stopped",label:"BE Stopped",sub:"Partial taken, rest stopped at entry (BE)",bg:"#1c1400",bd:"#ca8a04",tx:"#facc15",requiresPartial:true},
+  {id:"Trailed Stop",label:"Trailed Stop",sub:"Partial taken, SL moved past BE to S/R, then stopped",bg:"#1e1b3a",bd:"#818cf8",tx:"#a5b4fc",requiresPartial:true},
   {id:"BE → TP",label:"BE → TP",sub:"Partial taken, rest ran to TP",bg:"#022c22",bd:"#10b981",tx:"#6ee7b7",requiresPartial:true},
   {id:"Open",label:"Open",sub:"Still running",bg:"#0c1a2e",bd:"#2563eb",tx:"#60a5fa",requiresPartial:null},
 ];
-const ocMap={"Win":"green","Loss":"red","BE Stopped":"yellow","BE → TP":"teal","Open":"blue"};
+const ocMap={"Win":"green","Loss":"red","BE Stopped":"yellow","Trailed Stop":"purple","BE → TP":"teal","Open":"blue"};
 
 function Badge({children,color}){
   const c=CLRS[color]||CLRS.gray;
@@ -121,9 +133,9 @@ function PriceMap({entry,sl,tp,outcome,partialHit}){
   );
 }
 
-function PnlBreakdown({entry,sl,tp,outcome,riskAmount}){
+function PnlBreakdown({entry,sl,tp,outcome,riskAmount,trailPrice}){
   const rr=calcRR(entry,sl,tp);
-  const pnl=calcPnlR(entry,sl,tp,outcome);
+  const pnl=calcPnlR(entry,sl,tp,outcome,trailPrice);
   if(pnl===null||outcome==="Open")return null;
   const beP=calcBEPrice(entry,sl);
   const risk=parseFloat(riskAmount)||0;
@@ -135,6 +147,10 @@ function PnlBreakdown({entry,sl,tp,outcome,riskAmount}){
   }else if(outcome==="BE Stopped"){
     rows.push({label:`60% at BE 1.8R ${beP?"("+beP.toFixed(2)+")":""}`,r:`+${(PARTIAL_PCT*BE_TRIGGER_R).toFixed(2)}R`,d:risk*(PARTIAL_PCT*BE_TRIGGER_R),color:"#facc15"});
     rows.push({label:"40% stopped at entry — no loss",r:"0.00R",d:0,color:"#6b7280"});
+  }else if(outcome==="Trailed Stop"){
+    const remainR=calcTrailR(entry,sl,trailPrice);
+    rows.push({label:`60% at BE 1.8R ${beP?"("+beP.toFixed(2)+")":""}`,r:`+${(PARTIAL_PCT*BE_TRIGGER_R).toFixed(2)}R`,d:risk*(PARTIAL_PCT*BE_TRIGGER_R),color:"#a5b4fc"});
+    rows.push({label:`40% stopped at trailed SL ${trailPrice?"("+parseFloat(trailPrice).toFixed(2)+")":""}`,r:remainR!=null?`${remainR>=0?"+":""}${(REMAIN_PCT*remainR).toFixed(2)}R`:"—",d:remainR!=null?risk*(REMAIN_PCT*remainR):0,color:"#a5b4fc"});
   }else if(outcome==="BE → TP"){
     rows.push({label:`60% at BE 1.8R ${beP?"("+beP.toFixed(2)+")":""}`,r:`+${(PARTIAL_PCT*BE_TRIGGER_R).toFixed(2)}R`,d:risk*(PARTIAL_PCT*BE_TRIGGER_R),color:"#6ee7b7"});
     rows.push({label:"40% runs to full TP",r:`+${(REMAIN_PCT*rr).toFixed(2)}R`,d:risk*(REMAIN_PCT*rr),color:"#6ee7b7"});
@@ -171,7 +187,7 @@ function App(){
   const[saveError,setSaveError]=useState(false);
   const[editId,setEditId]=useState(null);
   const[resetArm,setResetArm]=useState(false);
-  const emptyForm=()=>({date:new Date().toISOString().slice(0,10),instrument:"XAUUSD",strategy:"OB Pullback",session:"London",entry:"",sl:"",tp:"",riskAmount:"",partialHit:false,outcome:"Open",notes:""});
+  const emptyForm=()=>({date:new Date().toISOString().slice(0,10),instrument:"XAUUSD",strategy:"OB Pullback",session:"London",entry:"",sl:"",tp:"",riskAmount:"",partialHit:false,outcome:"Open",trailPrice:"",notes:""});
   const[form,setForm]=useState(emptyForm());
 
   useEffect(()=>{
@@ -193,7 +209,7 @@ function App(){
   }
 
   const rr=calcRR(form.entry,form.sl,form.tp);
-  const pnlPrev=calcPnlR(form.entry,form.sl,form.tp,form.outcome);
+  const pnlPrev=calcPnlR(form.entry,form.sl,form.tp,form.outcome,form.trailPrice);
   const beP=calcBEPrice(form.entry,form.sl);
   const visibleOutcomes=OUTCOME_CONFIG.filter(o=>o.requiresPartial===null||o.requiresPartial===form.partialHit);
 
@@ -215,7 +231,7 @@ function App(){
     setSaved(true);setEditId(null);setForm(emptyForm());
     setTimeout(()=>setSaved(false),2000);
   }
-  function handleEdit(t){setForm({date:t.date,instrument:t.instrument,strategy:t.strategy,session:t.session,entry:String(t.entry),sl:String(t.sl),tp:String(t.tp),riskAmount:t.riskAmount!=null?t.riskAmount:"",partialHit:!!t.partialHit,outcome:t.outcome,notes:t.notes||""});setEditId(t.id);setView("log");}
+  function handleEdit(t){setForm({date:t.date,instrument:t.instrument,strategy:t.strategy,session:t.session,entry:String(t.entry),sl:String(t.sl),tp:String(t.tp),riskAmount:t.riskAmount!=null?t.riskAmount:"",partialHit:!!t.partialHit,outcome:t.outcome,trailPrice:t.trailPrice!=null?String(t.trailPrice):"",notes:t.notes||""});setEditId(t.id);setView("log");}
   async function handleDelete(id){await persist(trades.filter(t=>t.id!==id));}
   function handleResetClick(){
     if(!resetArm){setResetArm(true);setTimeout(()=>setResetArm(false),3000);return;}
@@ -223,8 +239,8 @@ function App(){
   }
 
   function exportCSV(){
-    const h=["Date","Instrument","Strategy","Session","Entry","SL","TP","R:R","Partial Hit","Outcome","P&L(R)","Risk($)","P&L($)","Notes"];
-    const rows=trades.map(t=>[t.date,t.instrument,t.strategy,t.session,t.entry,t.sl,t.tp,t.rr?`1:${t.rr}`:"",t.partialHit?"Yes":"No",t.outcome,t.pnlR!=null?t.pnlR:"",t.riskAmount!=null?t.riskAmount:"",t.dollarPnl!=null?t.dollarPnl:"",`"${(t.notes||"").replace(/"/g,'""')}"`]);
+    const h=["Date","Instrument","Strategy","Session","Entry","SL","TP","R:R","Partial Hit","Trail Price","Outcome","P&L(R)","Risk($)","P&L($)","Notes"];
+    const rows=trades.map(t=>[t.date,t.instrument,t.strategy,t.session,t.entry,t.sl,t.tp,t.rr?`1:${t.rr}`:"",t.partialHit?"Yes":"No",t.trailPrice||"",t.outcome,t.pnlR!=null?t.pnlR:"",t.riskAmount!=null?t.riskAmount:"",t.dollarPnl!=null?t.dollarPnl:"",`"${(t.notes||"").replace(/"/g,'""')}"`]);
     const csv=[h,...rows].map(r=>r.join(",")).join("\n");
     const a=document.createElement("a");a.href=URL.createObjectURL(new Blob([csv],{type:"text/csv"}));a.download="LevelHunter.csv";a.click();
   }
@@ -234,11 +250,12 @@ function App(){
     trades.forEach(t=>{
       if(t.outcome==="Open")return;
       const k=getMonthKey(t.date);
-      if(!map[k])map[k]={wins:0,losses:0,beStop:0,betp:0,totalR:0,totalDollar:0,count:0};
+      if(!map[k])map[k]={wins:0,losses:0,beStop:0,betp:0,trailed:0,totalR:0,totalDollar:0,count:0};
       map[k].count++;map[k].totalR+=t.pnlR||0;map[k].totalDollar+=t.dollarPnl||0;
       if(t.outcome==="Win")map[k].wins++;
       else if(t.outcome==="Loss")map[k].losses++;
       else if(t.outcome==="BE Stopped")map[k].beStop++;
+      else if(t.outcome==="Trailed Stop")map[k].trailed++;
       else if(t.outcome==="BE → TP"){map[k].wins++;map[k].betp++;}
     });
     return Object.entries(map).sort((a,b)=>b[0].localeCompare(a[0]));
@@ -381,7 +398,14 @@ function App(){
               })}
             </div>
             {!form.partialHit&&<div style={{fontSize:11,color:"#374151",marginBottom:10}}>Mark "Yes — moved to BE" above once price hits your partial to unlock BE outcomes.</div>}
-            <PnlBreakdown entry={form.entry} sl={form.sl} tp={form.tp} outcome={form.outcome} riskAmount={form.riskAmount}/>
+            {form.outcome==="Trailed Stop"&&(
+              <div style={{marginBottom:14}}>
+                <span style={lbl}>Stop Trailed To (price)</span>
+                <input inputMode="decimal" value={form.trailPrice} onChange={e=>setForm(f=>({...f,trailPrice:e.target.value}))} placeholder="Support/resistance price you moved SL to" style={{...inp,borderColor:"#818cf840"}}/>
+                <div style={{fontSize:11,color:"#4b5563",marginTop:6}}>Where you moved your stop after the partial — beyond breakeven, at a support/resistance level.</div>
+              </div>
+            )}
+            <PnlBreakdown entry={form.entry} sl={form.sl} tp={form.tp} outcome={form.outcome} riskAmount={form.riskAmount} trailPrice={form.trailPrice}/>
           </div>
 
           <div style={card}>
@@ -423,7 +447,10 @@ function App(){
                     </div>
                   ))}
                 </div>
-                {t.partialHit&&<div style={{marginBottom:8}}><Badge color="yellow">⚡ Partial taken at {calcBEPrice(t.entry,t.sl)?.toFixed(2)}</Badge></div>}
+                {t.partialHit&&<div style={{marginBottom:8,display:"flex",gap:6,flexWrap:"wrap"}}>
+                  <Badge color="yellow">⚡ Partial taken at {calcBEPrice(t.entry,t.sl)?.toFixed(2)}</Badge>
+                  {t.outcome==="Trailed Stop"&&t.trailPrice&&<Badge color="purple">SL trailed to {parseFloat(t.trailPrice).toFixed(2)}</Badge>}
+                </div>}
                 {t.notes&&<div style={{fontSize:12,color:"#4b5563",marginBottom:10,lineHeight:1.5}}>{t.notes}</div>}
                 <div style={{display:"flex",gap:8}}>
                   <button onClick={()=>handleEdit(t)} style={{flex:1,padding:"7px 0",background:"#0f1117",border:"1px solid #1f2937",color:"#9ca3af",borderRadius:7,fontSize:12,cursor:"pointer",fontWeight:600}}>Edit</button>
@@ -494,6 +521,7 @@ function App(){
                 <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
                   {m.betp>0&&<Badge color="teal">{m.betp} × BE → TP</Badge>}
                   {m.beStop>0&&<Badge color="yellow">{m.beStop} × BE Stopped (+1.08R each)</Badge>}
+                  {m.trailed>0&&<Badge color="purple">{m.trailed} × Trailed Stop</Badge>}
                 </div>
               </div>
             );
