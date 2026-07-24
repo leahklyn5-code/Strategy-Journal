@@ -24,22 +24,32 @@
 const{useState,useEffect}=React;
 
 const INSTRUMENTS=["XAUUSD","XAGUSD","BTC/USDT","ETH/USDT","SOL/USDT","HYPE/USDT","Other"];
-const STRATEGIES=["OB Pullback"];
+const STRATEGIES=["OB Pullback","Gainers"];
 const SESSIONS=["London","New York","Asian","Overlap"];
 const TRADES_KEY="lh-trades-v6";
 const BE_TRIGGER_R=1.8,PARTIAL_PCT=0.60,REMAIN_PCT=0.40;
+const GAINERS_PARTIAL_PCT=0.70,GAINERS_REMAIN_PCT=0.30;
 
 function calcRR(entry,sl,tp){
   const e=parseFloat(entry),s=parseFloat(sl),t=parseFloat(tp);
   if(!e||!s||!t||e===s)return null;
   return Math.abs(t-e)/Math.abs(e-s);
 }
-function calcPnlR(entry,sl,tp,outcome){
+function calcRAtPrice(entry,sl,price){
+  const e=parseFloat(entry),s=parseFloat(sl),p=parseFloat(price);
+  if(!e||!s||e===s||(!p&&p!==0))return null;
+  return Math.abs(p-e)/Math.abs(e-s);
+}
+function calcPnlR(entry,sl,tp,outcome,strategy,supportPrice){
   const rr=calcRR(entry,sl,tp);
+  const isGainers=strategy==="Gainers";
+  const partialPct=isGainers?GAINERS_PARTIAL_PCT:PARTIAL_PCT;
+  const remainPct=isGainers?GAINERS_REMAIN_PCT:REMAIN_PCT;
+  const partialR=isGainers?calcRAtPrice(entry,sl,supportPrice):BE_TRIGGER_R;
   if(outcome==="Win"){if(rr===null)return null;return+rr.toFixed(2);}
   if(outcome==="Loss")return -1;
-  if(outcome==="BE Stopped")return+(PARTIAL_PCT*BE_TRIGGER_R).toFixed(2);
-  if(outcome==="BE → TP"){if(rr===null)return null;return+(PARTIAL_PCT*BE_TRIGGER_R+REMAIN_PCT*rr).toFixed(2);}
+  if(outcome==="BE Stopped"){if(partialR===null)return null;return+(partialPct*partialR).toFixed(2);}
+  if(outcome==="BE → TP"){if(rr===null||partialR===null)return null;return+(partialPct*partialR+remainPct*rr).toFixed(2);}
   return null;
 }
 function calcBEPrice(entry,sl){
@@ -79,11 +89,13 @@ function DollarTag({d}){
   return<Badge color={color}>{fmtDollar(d)}</Badge>;
 }
 
-function PriceMap({entry,sl,tp,outcome,partialHit}){
+function PriceMap({entry,sl,tp,outcome,partialHit,strategy,supportPrice}){
   const e=parseFloat(entry),s=parseFloat(sl),t=parseFloat(tp);
   if(!e||!s||!t)return null;
   const rr=calcRR(entry,sl,tp);
-  const beP=calcBEPrice(entry,sl);
+  const isGainers=strategy==="Gainers";
+  const beP=isGainers?(parseFloat(supportPrice)||null):calcBEPrice(entry,sl);
+  const beLabel=isGainers?"Support":"BE 1.8R";
   const isLong=t>e;
   const pts=[s,e,t,...(beP?[beP]:[])];
   const mn=Math.min(...pts),mx=Math.max(...pts),span=mx-mn||1;
@@ -91,7 +103,7 @@ function PriceMap({entry,sl,tp,outcome,partialHit}){
   const levels=[
     {price:s,label:"SL",color:"#f87171",dot:8},
     {price:e,label:"Entry",color:"#f59e0b",dot:11},
-    ...(beP?[{price:beP,label:"BE 1.8R",color:partialHit?"#facc15":"#6b7280",dot:8}]:[]),
+    ...(beP?[{price:beP,label:beLabel,color:partialHit?"#facc15":"#6b7280",dot:8}]:[]),
     {price:t,label:"TP",color:"#4ade80",dot:8},
   ].sort((a,b)=>isLong?a.price-b.price:b.price-a.price);
   return(
@@ -121,11 +133,17 @@ function PriceMap({entry,sl,tp,outcome,partialHit}){
   );
 }
 
-function PnlBreakdown({entry,sl,tp,outcome,riskAmount}){
+function PnlBreakdown({entry,sl,tp,outcome,riskAmount,strategy,supportPrice}){
   const rr=calcRR(entry,sl,tp);
-  const pnl=calcPnlR(entry,sl,tp,outcome);
+  const pnl=calcPnlR(entry,sl,tp,outcome,strategy,supportPrice);
   if(pnl===null||outcome==="Open")return null;
-  const beP=calcBEPrice(entry,sl);
+  const isGainers=strategy==="Gainers";
+  const partialPct=isGainers?GAINERS_PARTIAL_PCT:PARTIAL_PCT;
+  const remainPct=isGainers?GAINERS_REMAIN_PCT:REMAIN_PCT;
+  const partialR=isGainers?calcRAtPrice(entry,sl,supportPrice):BE_TRIGGER_R;
+  const beP=isGainers?(parseFloat(supportPrice)||null):calcBEPrice(entry,sl);
+  const pctLabel=`${Math.round(partialPct*100)}%`,remainLabel=`${Math.round(remainPct*100)}%`;
+  const triggerLabel=isGainers?"support":`BE ${BE_TRIGGER_R}R`;
   const risk=parseFloat(riskAmount)||0;
   const rows=[];
   if(outcome==="Win"){
@@ -133,11 +151,11 @@ function PnlBreakdown({entry,sl,tp,outcome,riskAmount}){
   }else if(outcome==="Loss"){
     rows.push({label:"Full position stopped at SL",r:"-1.00R",d:-risk,color:"#f87171"});
   }else if(outcome==="BE Stopped"){
-    rows.push({label:`60% at BE 1.8R ${beP?"("+beP.toFixed(2)+")":""}`,r:`+${(PARTIAL_PCT*BE_TRIGGER_R).toFixed(2)}R`,d:risk*(PARTIAL_PCT*BE_TRIGGER_R),color:"#facc15"});
-    rows.push({label:"40% stopped at entry — no loss",r:"0.00R",d:0,color:"#6b7280"});
+    rows.push({label:`${pctLabel} at ${triggerLabel} ${beP?"("+beP.toFixed(2)+")":""}`,r:`+${(partialPct*partialR).toFixed(2)}R`,d:risk*(partialPct*partialR),color:"#facc15"});
+    rows.push({label:`${remainLabel} stopped at entry — no loss`,r:"0.00R",d:0,color:"#6b7280"});
   }else if(outcome==="BE → TP"){
-    rows.push({label:`60% at BE 1.8R ${beP?"("+beP.toFixed(2)+")":""}`,r:`+${(PARTIAL_PCT*BE_TRIGGER_R).toFixed(2)}R`,d:risk*(PARTIAL_PCT*BE_TRIGGER_R),color:"#6ee7b7"});
-    rows.push({label:"40% runs to full TP",r:`+${(REMAIN_PCT*rr).toFixed(2)}R`,d:risk*(REMAIN_PCT*rr),color:"#6ee7b7"});
+    rows.push({label:`${pctLabel} at ${triggerLabel} ${beP?"("+beP.toFixed(2)+")":""}`,r:`+${(partialPct*partialR).toFixed(2)}R`,d:risk*(partialPct*partialR),color:"#6ee7b7"});
+    rows.push({label:`${remainLabel} runs to full TP`,r:`+${(remainPct*rr).toFixed(2)}R`,d:risk*(remainPct*rr),color:"#6ee7b7"});
   }
   const totalDollar=risk*pnl;
   return(
@@ -172,7 +190,7 @@ function App(){
   const[editId,setEditId]=useState(null);
   const[resetArm,setResetArm]=useState(false);
   const[importMsg,setImportMsg]=useState("");
-  const emptyForm=()=>({date:new Date().toISOString().slice(0,10),instrument:"XAUUSD",strategy:"OB Pullback",session:"London",entry:"",sl:"",tp:"",riskAmount:"",partialHit:false,outcome:"Open",notes:""});
+  const emptyForm=()=>({date:new Date().toISOString().slice(0,10),instrument:"XAUUSD",strategy:"OB Pullback",session:"London",entry:"",sl:"",tp:"",riskAmount:"",partialHit:false,outcome:"Open",supportPrice:"",notes:""});
   const[form,setForm]=useState(emptyForm());
 
   useEffect(()=>{
@@ -192,8 +210,10 @@ function App(){
   }
 
   const rr=calcRR(form.entry,form.sl,form.tp);
-  const pnlPrev=calcPnlR(form.entry,form.sl,form.tp,form.outcome);
-  const beP=calcBEPrice(form.entry,form.sl);
+  const isGainers=form.strategy==="Gainers";
+  const pnlPrev=calcPnlR(form.entry,form.sl,form.tp,form.outcome,form.strategy,form.supportPrice);
+  const beP=isGainers?(parseFloat(form.supportPrice)||null):calcBEPrice(form.entry,form.sl);
+  const supportR=isGainers?calcRAtPrice(form.entry,form.sl,form.supportPrice):null;
   const visibleOutcomes=OUTCOME_CONFIG.filter(o=>o.requiresPartial===null||o.requiresPartial===form.partialHit);
 
   function setPartialHit(v){
@@ -214,7 +234,7 @@ function App(){
     setSaved(true);setEditId(null);setForm(emptyForm());
     setTimeout(()=>setSaved(false),2000);
   }
-  function handleEdit(t){setForm({date:t.date,instrument:t.instrument,strategy:t.strategy,session:t.session,entry:String(t.entry),sl:String(t.sl),tp:String(t.tp),riskAmount:t.riskAmount!=null?t.riskAmount:"",partialHit:!!t.partialHit,outcome:t.outcome,notes:t.notes||""});setEditId(t.id);setView("log");}
+  function handleEdit(t){setForm({date:t.date,instrument:t.instrument,strategy:t.strategy,session:t.session,entry:String(t.entry),sl:String(t.sl),tp:String(t.tp),riskAmount:t.riskAmount!=null?t.riskAmount:"",partialHit:!!t.partialHit,outcome:t.outcome,supportPrice:t.supportPrice!=null?String(t.supportPrice):"",notes:t.notes||""});setEditId(t.id);setView("log");}
   function handleDelete(id){persist(trades.filter(t=>t.id!==id));}
   function handleResetClick(){
     if(!resetArm){setResetArm(true);setTimeout(()=>setResetArm(false),3000);return;}
@@ -222,8 +242,8 @@ function App(){
   }
 
   function exportCSV(){
-    const h=["Date","Instrument","Strategy","Session","Entry","SL","TP","R:R","Partial Hit","Outcome","P&L(R)","Risk($)","P&L($)","Notes"];
-    const rows=trades.map(t=>[t.date,t.instrument,t.strategy,t.session,t.entry,t.sl,t.tp,t.rr?`1:${t.rr}`:"",t.partialHit?"Yes":"No",t.outcome,t.pnlR!=null?t.pnlR:"",t.riskAmount!=null?t.riskAmount:"",t.dollarPnl!=null?t.dollarPnl:"",`"${(t.notes||"").replace(/"/g,'""')}"`]);
+    const h=["Date","Instrument","Strategy","Session","Entry","SL","TP","R:R","Partial Hit","Support Price","Outcome","P&L(R)","Risk($)","P&L($)","Notes"];
+    const rows=trades.map(t=>[t.date,t.instrument,t.strategy,t.session,t.entry,t.sl,t.tp,t.rr?`1:${t.rr}`:"",t.partialHit?"Yes":"No",t.supportPrice||"",t.outcome,t.pnlR!=null?t.pnlR:"",t.riskAmount!=null?t.riskAmount:"",t.dollarPnl!=null?t.dollarPnl:"",`"${(t.notes||"").replace(/"/g,'""')}"`]);
     const csv=[h,...rows].map(r=>r.join(",")).join("\n");
     const a=document.createElement("a");a.href=URL.createObjectURL(new Blob([csv],{type:"text/csv"}));a.download="LevelHunter.csv";a.click();
   }
@@ -368,24 +388,34 @@ function App(){
               ))}
             </div>
 
-            {beP&&(
+            {(isGainers||beP)&&(
               <div style={{background:"#0d1117",border:"1px solid #ca8a0430",borderRadius:8,padding:"10px 14px",marginBottom:12}}>
-                <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-                  <div>
-                    <div style={{fontSize:10,color:"#ca8a04",letterSpacing:2,textTransform:"uppercase",fontWeight:700}}>Your BE Level (1.8R)</div>
-                    <div style={{fontSize:11,color:"#6b7280",marginTop:3}}>Partial target · move SL to entry here</div>
+                {isGainers?(
+                  <>
+                    <div style={{fontSize:10,color:"#ca8a04",letterSpacing:2,textTransform:"uppercase",fontWeight:700,marginBottom:8}}>Nearest Major Support (your 70% level)</div>
+                    <input inputMode="decimal" value={form.supportPrice} onChange={e=>setForm(f=>({...f,supportPrice:e.target.value}))} placeholder="Enter the support price" style={{...inp,borderColor:"#ca8a0440"}}/>
+                    {supportR!==null&&<div style={{marginTop:8,fontSize:12,color:"#facc15",fontFamily:"monospace",fontWeight:700}}>≈ 1 : {supportR.toFixed(2)} at this level</div>}
+                  </>
+                ):(
+                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                    <div>
+                      <div style={{fontSize:10,color:"#ca8a04",letterSpacing:2,textTransform:"uppercase",fontWeight:700}}>Your BE Level (1.8R)</div>
+                      <div style={{fontSize:11,color:"#6b7280",marginTop:3}}>Partial target · move SL to entry here</div>
+                    </div>
+                    <div style={{fontFamily:"monospace",fontWeight:800,fontSize:18,color:"#facc15"}}>{beP.toFixed(2)}</div>
                   </div>
-                  <div style={{fontFamily:"monospace",fontWeight:800,fontSize:18,color:"#facc15"}}>{beP.toFixed(2)}</div>
-                </div>
-                <div style={{marginTop:10,fontSize:11,color:"#9ca3af",marginBottom:6}}>Did price reach this level, and did you move your stop to breakeven?</div>
-                <div style={{display:"flex",gap:8}}>
-                  <button onClick={()=>setPartialHit(false)} style={{flex:1,padding:"9px 0",borderRadius:7,fontSize:12,fontWeight:700,cursor:"pointer",background:!form.partialHit?"#111827":"#0f1117",border:`1px solid ${!form.partialHit?"#4b5563":"#1f2937"}`,color:!form.partialHit?"#e5e7eb":"#6b7280"}}>No — hasn't hit yet</button>
-                  <button onClick={()=>setPartialHit(true)} style={{flex:1,padding:"9px 0",borderRadius:7,fontSize:12,fontWeight:700,cursor:"pointer",background:form.partialHit?"#1c1400":"#0f1117",border:`1px solid ${form.partialHit?"#ca8a04":"#1f2937"}`,color:form.partialHit?"#facc15":"#6b7280"}}>Yes — moved to BE</button>
-                </div>
+                )}
+                {beP&&<>
+                  <div style={{marginTop:10,fontSize:11,color:"#9ca3af",marginBottom:6}}>Did price reach this level, and did you take your partial + move stop to breakeven?</div>
+                  <div style={{display:"flex",gap:8}}>
+                    <button onClick={()=>setPartialHit(false)} style={{flex:1,padding:"9px 0",borderRadius:7,fontSize:12,fontWeight:700,cursor:"pointer",background:!form.partialHit?"#111827":"#0f1117",border:`1px solid ${!form.partialHit?"#4b5563":"#1f2937"}`,color:!form.partialHit?"#e5e7eb":"#6b7280"}}>No — hasn't hit yet</button>
+                    <button onClick={()=>setPartialHit(true)} style={{flex:1,padding:"9px 0",borderRadius:7,fontSize:12,fontWeight:700,cursor:"pointer",background:form.partialHit?"#1c1400":"#0f1117",border:`1px solid ${form.partialHit?"#ca8a04":"#1f2937"}`,color:form.partialHit?"#facc15":"#6b7280"}}>Yes — moved to BE</button>
+                  </div>
+                </>}
               </div>
             )}
 
-            <PriceMap entry={form.entry} sl={form.sl} tp={form.tp} outcome={form.outcome} partialHit={form.partialHit}/>
+            <PriceMap entry={form.entry} sl={form.sl} tp={form.tp} outcome={form.outcome} partialHit={form.partialHit} strategy={form.strategy} supportPrice={form.supportPrice}/>
 
             {rr!==null&&(
               <div style={{marginTop:10,background:"#0f1117",border:`1px solid ${rr>=2?"#16a34a40":"#f59e0b40"}`,borderRadius:8,padding:"11px 14px",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
@@ -414,7 +444,7 @@ function App(){
               })}
             </div>
             {!form.partialHit&&<div style={{fontSize:11,color:"#374151",marginBottom:10}}>Mark "Yes — moved to BE" above once price hits your partial to unlock BE outcomes.</div>}
-            <PnlBreakdown entry={form.entry} sl={form.sl} tp={form.tp} outcome={form.outcome} riskAmount={form.riskAmount}/>
+            <PnlBreakdown entry={form.entry} sl={form.sl} tp={form.tp} outcome={form.outcome} riskAmount={form.riskAmount} strategy={form.strategy} supportPrice={form.supportPrice}/>
           </div>
 
           <div style={card}>
@@ -456,7 +486,7 @@ function App(){
                     </div>
                   ))}
                 </div>
-                {t.partialHit&&<div style={{marginBottom:8}}><Badge color="yellow">⚡ Partial taken at {calcBEPrice(t.entry,t.sl)?.toFixed(2)}</Badge></div>}
+                {t.partialHit&&<div style={{marginBottom:8}}><Badge color="yellow">⚡ Partial taken at {(t.strategy==="Gainers"?parseFloat(t.supportPrice):calcBEPrice(t.entry,t.sl))?.toFixed(2)}</Badge></div>}
                 {t.notes&&<div style={{fontSize:12,color:"#4b5563",marginBottom:10,lineHeight:1.5}}>{t.notes}</div>}
                 <div style={{display:"flex",gap:8}}>
                   <button onClick={()=>handleEdit(t)} style={{flex:1,padding:"7px 0",background:"#0f1117",border:"1px solid #1f2937",color:"#9ca3af",borderRadius:7,fontSize:12,cursor:"pointer",fontWeight:600}}>Edit</button>
