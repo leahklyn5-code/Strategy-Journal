@@ -26,7 +26,7 @@ const{useState,useEffect}=React;
 const INSTRUMENTS=["XAUUSD","XAGUSD","BTC/USDT","ETH/USDT","SOL/USDT","HYPE/USDT","Other"];
 const STRATEGIES=["OB Pullback"];
 const SESSIONS=["London","New York","Asian","Overlap"];
-const TRADES_KEY="trades";
+const TRADES_KEY="lh-trades-v6";
 const BE_TRIGGER_R=1.8,PARTIAL_PCT=0.60,REMAIN_PCT=0.40;
 
 function calcRR(entry,sl,tp){
@@ -187,24 +187,23 @@ function App(){
   const[saveError,setSaveError]=useState(false);
   const[editId,setEditId]=useState(null);
   const[resetArm,setResetArm]=useState(false);
+  const[importMsg,setImportMsg]=useState("");
   const emptyForm=()=>({date:new Date().toISOString().slice(0,10),instrument:"XAUUSD",strategy:"OB Pullback",session:"London",entry:"",sl:"",tp:"",riskAmount:"",partialHit:false,outcome:"Open",trailPrice:"",notes:""});
   const[form,setForm]=useState(emptyForm());
 
   useEffect(()=>{
-    (async()=>{
-      try{
-        const r=await window.storage.get(TRADES_KEY,false);
-        if(r&&r.value)setTrades(JSON.parse(r.value));
-      }catch(e){/* no trades saved yet */}
-      setLoaded(true);
-    })();
+    try{
+      const raw=localStorage.getItem(TRADES_KEY);
+      if(raw)setTrades(JSON.parse(raw));
+    }catch(e){/* no trades saved yet, or storage blocked */}
+    setLoaded(true);
   },[]);
 
-  async function persist(u){
+  function persist(u){
     setTrades(u);
     try{
-      const res=await window.storage.set(TRADES_KEY,JSON.stringify(u),false);
-      setSaveError(!res);
+      localStorage.setItem(TRADES_KEY,JSON.stringify(u));
+      setSaveError(false);
     }catch(e){setSaveError(true);}
   }
 
@@ -221,18 +220,18 @@ function App(){
     });
   }
 
-  async function handleSave(){
+  function handleSave(){
     if(!form.entry||!form.sl||!form.tp)return;
     const riskAmount=parseFloat(form.riskAmount)||0;
     const rrVal=rr?+rr.toFixed(2):null;
     const dollarPnl=pnlPrev!=null?+(pnlPrev*riskAmount).toFixed(2):null;
     const trade={id:editId||Date.now(),...form,riskAmount,rr:rrVal,pnlR:pnlPrev,dollarPnl,savedAt:new Date().toISOString()};
-    await persist(editId?trades.map(t=>t.id===editId?trade:t):[trade,...trades]);
+    persist(editId?trades.map(t=>t.id===editId?trade:t):[trade,...trades]);
     setSaved(true);setEditId(null);setForm(emptyForm());
     setTimeout(()=>setSaved(false),2000);
   }
   function handleEdit(t){setForm({date:t.date,instrument:t.instrument,strategy:t.strategy,session:t.session,entry:String(t.entry),sl:String(t.sl),tp:String(t.tp),riskAmount:t.riskAmount!=null?t.riskAmount:"",partialHit:!!t.partialHit,outcome:t.outcome,trailPrice:t.trailPrice!=null?String(t.trailPrice):"",notes:t.notes||""});setEditId(t.id);setView("log");}
-  async function handleDelete(id){await persist(trades.filter(t=>t.id!==id));}
+  function handleDelete(id){persist(trades.filter(t=>t.id!==id));}
   function handleResetClick(){
     if(!resetArm){setResetArm(true);setTimeout(()=>setResetArm(false),3000);return;}
     persist([]);setResetArm(false);
@@ -243,6 +242,34 @@ function App(){
     const rows=trades.map(t=>[t.date,t.instrument,t.strategy,t.session,t.entry,t.sl,t.tp,t.rr?`1:${t.rr}`:"",t.partialHit?"Yes":"No",t.trailPrice||"",t.outcome,t.pnlR!=null?t.pnlR:"",t.riskAmount!=null?t.riskAmount:"",t.dollarPnl!=null?t.dollarPnl:"",`"${(t.notes||"").replace(/"/g,'""')}"`]);
     const csv=[h,...rows].map(r=>r.join(",")).join("\n");
     const a=document.createElement("a");a.href=URL.createObjectURL(new Blob([csv],{type:"text/csv"}));a.download="LevelHunter.csv";a.click();
+  }
+
+  function exportBackup(){
+    const data=JSON.stringify(trades,null,2);
+    const a=document.createElement("a");
+    a.href=URL.createObjectURL(new Blob([data],{type:"application/json"}));
+    a.download=`LevelHunter-backup-${new Date().toISOString().slice(0,10)}.json`;
+    a.click();
+    setImportMsg("Backup file downloaded.");
+    setTimeout(()=>setImportMsg(""),3000);
+  }
+  function importBackup(e){
+    const file=e.target.files[0];
+    if(!file)return;
+    const reader=new FileReader();
+    reader.onload=(ev)=>{
+      try{
+        const parsed=JSON.parse(ev.target.result);
+        if(!Array.isArray(parsed))throw new Error("bad shape");
+        persist(parsed);
+        setImportMsg(`Restored ${parsed.length} trade${parsed.length===1?"":"s"} from backup.`);
+      }catch(err){
+        setImportMsg("Couldn't read that file — is it a Level Hunter backup?");
+      }
+      setTimeout(()=>setImportMsg(""),4000);
+    };
+    reader.readAsText(file);
+    e.target.value="";
   }
 
   const monthlySummary=(()=>{
@@ -286,11 +313,17 @@ function App(){
         </div>
         <div style={{textAlign:"right"}}>
           <div style={{fontSize:11,color:"#4b5563"}}>{trades.length} trades</div>
-          <button onClick={exportCSV} style={{fontSize:11,color:"#6b7280",background:"none",border:"none",cursor:"pointer",padding:0,marginTop:3}}>↓ Export CSV</button>
+          <button onClick={exportCSV} style={{fontSize:11,color:"#6b7280",background:"none",border:"none",cursor:"pointer",padding:0,marginTop:3,display:"block"}}>↓ Export CSV</button>
+          <button onClick={exportBackup} style={{fontSize:11,color:"#6b7280",background:"none",border:"none",cursor:"pointer",padding:0,marginTop:3,display:"block"}}>↓ Backup (.json)</button>
+          <label style={{fontSize:11,color:"#6b7280",cursor:"pointer",padding:0,marginTop:3,display:"block"}}>
+            ↑ Restore backup
+            <input type="file" accept="application/json" style={{display:"none"}} onChange={importBackup}/>
+          </label>
           <button onClick={handleResetClick} style={{fontSize:11,color:resetArm?"#f87171":"#374151",background:"none",border:"none",cursor:"pointer",padding:0,marginTop:3,display:"block"}}>{resetArm?"Tap again to confirm":"Reset data"}</button>
         </div>
       </div>
-      {saveError&&<div style={{margin:"10px 18px 0",fontSize:11,color:"#f87171",background:"#2d0a0a",border:"1px solid #dc262640",borderRadius:6,padding:"6px 10px"}}>Couldn't save — check your connection and try again.</div>}
+      {saveError&&<div style={{margin:"10px 18px 0",fontSize:11,color:"#f87171",background:"#2d0a0a",border:"1px solid #dc262640",borderRadius:6,padding:"6px 10px"}}>Couldn't save to this browser's storage — it may be full or restricted.</div>}
+      {importMsg&&<div style={{margin:"10px 18px 0",fontSize:11,color:"#4ade80",background:"#052e16",border:"1px solid #16a34a40",borderRadius:6,padding:"6px 10px"}}>{importMsg}</div>}
 
       {/* Nav */}
       <div style={{display:"flex",gap:8,padding:"14px 18px 0"}}>
