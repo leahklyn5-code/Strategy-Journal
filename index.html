@@ -208,6 +208,9 @@ function App(){
   const[editId,setEditId]=useState(null);
   const[resetArm,setResetArm]=useState(false);
   const[importMsg,setImportMsg]=useState("");
+  const[filterStrategy,setFilterStrategy]=useState("All");
+  const[filterInstrument,setFilterInstrument]=useState("All");
+  const[filterOutcome,setFilterOutcome]=useState("All");
   const emptyForm=()=>({date:new Date().toISOString().slice(0,10),instrument:"XAUUSD",strategy:"OB Pullback",session:"London",entry:"",sl:"",tp:"",riskAmount:"",partialHit:false,outcome:"Open",supportPrice:"",notes:""});
   const[form,setForm]=useState(emptyForm());
 
@@ -308,6 +311,14 @@ function App(){
     });
     return Object.entries(map).sort((a,b)=>b[0].localeCompare(a[0]));
   })();
+
+  const filteredTrades=trades.filter(t=>
+    (filterStrategy==="All"||t.strategy===filterStrategy)&&
+    (filterInstrument==="All"||t.instrument===filterInstrument)&&
+    (filterOutcome==="All"||t.outcome===filterOutcome)
+  );
+  const usedInstruments=["All",...Array.from(new Set(trades.map(t=>t.instrument)))];
+  const filtersActive=filterStrategy!=="All"||filterInstrument!=="All"||filterOutcome!=="All";
 
   const card={background:"#0a0e18",border:"1px solid #1a2233",borderRadius:12,padding:18,marginBottom:14};
   const inp={background:"#0f1117",border:"1px solid #1f2937",borderRadius:8,color:"#e5e7eb",padding:"11px 13px",fontSize:15,width:"100%",outline:"none",fontFamily:"monospace"};
@@ -479,7 +490,34 @@ function App(){
         {/* ═══ HISTORY ═══ */}
         {view==="history"&&<>
           {trades.length===0&&<div style={{color:"#374151",textAlign:"center",padding:48,fontSize:13}}>No trades logged yet.</div>}
-          {trades.map(t=>{
+          {trades.length>0&&(
+            <div style={{...card,padding:14,marginBottom:12}}>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
+                <div style={{fontSize:10,color:"#6b7280",letterSpacing:2,textTransform:"uppercase"}}>Filter</div>
+                {filtersActive&&<button onClick={()=>{setFilterStrategy("All");setFilterInstrument("All");setFilterOutcome("All");}} style={{fontSize:11,color:"#f59e0b",background:"none",border:"none",cursor:"pointer",padding:0}}>Clear</button>}
+              </div>
+              <div style={{fontSize:10,color:"#4b5563",marginBottom:5}}>Strategy</div>
+              <div style={{display:"flex",flexWrap:"wrap",gap:6,marginBottom:10}}>
+                {["All",...STRATEGIES].map(s=>(
+                  <button key={s} onClick={()=>setFilterStrategy(s)} style={{padding:"6px 11px",borderRadius:6,fontSize:12,fontWeight:600,cursor:"pointer",background:filterStrategy===s?"#1a1200":"#0f1117",border:`1px solid ${filterStrategy===s?"#f59e0b":"#1f2937"}`,color:filterStrategy===s?"#f59e0b":"#6b7280"}}>{s}</button>
+                ))}
+              </div>
+              <div style={{fontSize:10,color:"#4b5563",marginBottom:5}}>Instrument</div>
+              <div style={{display:"flex",flexWrap:"wrap",gap:6,marginBottom:10}}>
+                {usedInstruments.map(i=>(
+                  <button key={i} onClick={()=>setFilterInstrument(i)} style={{padding:"6px 11px",borderRadius:6,fontSize:12,fontWeight:600,cursor:"pointer",background:filterInstrument===i?"#1a1200":"#0f1117",border:`1px solid ${filterInstrument===i?"#f59e0b":"#1f2937"}`,color:filterInstrument===i?"#f59e0b":"#6b7280"}}>{i}</button>
+                ))}
+              </div>
+              <div style={{fontSize:10,color:"#4b5563",marginBottom:5}}>Outcome</div>
+              <div style={{display:"flex",flexWrap:"wrap",gap:6}}>
+                {["All","Win","Loss","BE Stopped","BE → TP","Open"].map(o=>(
+                  <button key={o} onClick={()=>setFilterOutcome(o)} style={{padding:"6px 11px",borderRadius:6,fontSize:12,fontWeight:600,cursor:"pointer",background:filterOutcome===o?"#1a1200":"#0f1117",border:`1px solid ${filterOutcome===o?"#f59e0b":"#1f2937"}`,color:filterOutcome===o?"#f59e0b":"#6b7280"}}>{o}</button>
+                ))}
+              </div>
+            </div>
+          )}
+          {trades.length>0&&filteredTrades.length===0&&<div style={{color:"#374151",textAlign:"center",padding:32,fontSize:13}}>No trades match this filter.</div>}
+          {filteredTrades.map(t=>{
             const oc=ocMap[t.outcome]||"gray";
             return(
               <div key={t.id} style={{...card,marginBottom:10}}>
