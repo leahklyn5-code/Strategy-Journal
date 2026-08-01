@@ -81,12 +81,30 @@ function RTag({v}){
   if(v===null||v===undefined)return<Badge color="blue">Open</Badge>;
   if(v>0)return<Badge color="green">+{v}R</Badge>;
   if(v<0)return<Badge color="red">{v}R</Badge>;
-  return<Badge color="yellow">+1.08R</Badge>;
+  return<Badge color="yellow">0.00R</Badge>;
 }
 function DollarTag({d}){
   if(d===null||d===undefined)return null;
   const color=d>0?"green":d<0?"red":"yellow";
   return<Badge color={color}>{fmtDollar(d)}</Badge>;
+}
+function EquityCurve({points}){
+  if(!points||points.length<2)return null;
+  const w=100,h=52;
+  const mn=Math.min(0,...points),mx=Math.max(0,...points);
+  const span=(mx-mn)||1;
+  const stepX=w/(points.length-1);
+  const coords=points.map((p,i)=>`${(i*stepX).toFixed(2)},${(h-((p-mn)/span)*h).toFixed(2)}`);
+  const last=points[points.length-1];
+  const color=last>=0?"#4ade80":"#f87171";
+  const zeroY=(h-((0-mn)/span)*h).toFixed(2);
+  return(
+    <svg viewBox={`0 0 ${w} ${h}`} preserveAspectRatio="none" style={{width:"100%",height:56,display:"block"}}>
+      <line x1="0" y1={zeroY} x2={w} y2={zeroY} stroke="#1f2937" strokeWidth="0.6" strokeDasharray="2,2"/>
+      <path d={`M0,${h} L${coords.join(" L")} L${w},${h} Z`} fill={color} fillOpacity="0.12" stroke="none"/>
+      <path d={`M${coords.join(" L")}`} fill="none" stroke={color} strokeWidth="1.6" vectorEffect="non-scaling-stroke"/>
+    </svg>
+  );
 }
 
 function PriceMap({entry,sl,tp,outcome,partialHit,strategy,supportPrice}){
@@ -281,11 +299,11 @@ function App(){
     trades.forEach(t=>{
       if(t.outcome==="Open")return;
       const k=getMonthKey(t.date);
-      if(!map[k])map[k]={wins:0,losses:0,beStop:0,betp:0,totalR:0,totalDollar:0,count:0};
+      if(!map[k])map[k]={wins:0,losses:0,beStop:0,beStopR:0,betp:0,totalR:0,totalDollar:0,count:0};
       map[k].count++;map[k].totalR+=t.pnlR||0;map[k].totalDollar+=t.dollarPnl||0;
       if(t.outcome==="Win")map[k].wins++;
       else if(t.outcome==="Loss")map[k].losses++;
-      else if(t.outcome==="BE Stopped")map[k].beStop++;
+      else if(t.outcome==="BE Stopped"){map[k].wins++;map[k].beStop++;map[k].beStopR+=t.pnlR||0;}
       else if(t.outcome==="BE → TP"){map[k].wins++;map[k].betp++;}
     });
     return Object.entries(map).sort((a,b)=>b[0].localeCompare(a[0]));
@@ -501,22 +519,44 @@ function App(){
         {view==="monthly"&&<>
           {(()=>{
             const cl=trades.filter(t=>t.outcome!=="Open");
-            const wins=cl.filter(t=>t.outcome==="Win"||t.outcome==="BE → TP").length;
+            const beStops=cl.filter(t=>t.outcome==="BE Stopped").length;
+            const wins=cl.filter(t=>t.outcome==="Win"||t.outcome==="BE → TP"||t.outcome==="BE Stopped").length;
+            const losses=cl.filter(t=>t.outcome==="Loss").length;
+            const wr=cl.length?Math.round((wins/cl.length)*100):null;
             const totalR=cl.reduce((s,t)=>s+(t.pnlR||0),0);
             const totalDollar=cl.reduce((s,t)=>s+(t.dollarPnl||0),0);
-            const wr=cl.length?Math.round((wins/cl.length)*100):0;
             const avgR=cl.length?(totalR/cl.length).toFixed(2):"0.00";
             const avgDollar=cl.length?(totalDollar/cl.length):0;
+            const grossProfit=cl.reduce((s,t)=>s+((t.pnlR||0)>0?t.pnlR:0),0);
+            const grossLoss=Math.abs(cl.reduce((s,t)=>s+((t.pnlR||0)<0?t.pnlR:0),0));
+            const profitFactor=grossLoss>0?grossProfit/grossLoss:(grossProfit>0?null:0);
+            const pfDisplay=profitFactor===null?"∞":profitFactor.toFixed(2);
+            const bestTrade=cl.length?Math.max(...cl.map(t=>t.pnlR||0)):0;
+            const sortedClosed=[...cl].sort((a,b)=>new Date(a.date)-new Date(b.date));
+            let running=0;
+            const curve=sortedClosed.map(t=>{running+=(t.pnlR||0);return+running.toFixed(2);});
             return(
               <div style={{...card,marginBottom:20}}>
                 <div style={{fontSize:10,color:"#f59e0b",letterSpacing:3,textTransform:"uppercase",marginBottom:12}}>All Time</div>
+                {curve.length>=2&&(
+                  <div style={{marginBottom:14}}>
+                    <div style={{display:"flex",justifyContent:"space-between",fontSize:10,color:"#4b5563",textTransform:"uppercase",letterSpacing:1,marginBottom:4}}>
+                      <span>Equity Curve (R)</span>
+                      <span style={{color:totalR>=0?"#4ade80":"#f87171",fontFamily:"monospace"}}>{totalR>=0?"+":""}{totalR.toFixed(2)}R</span>
+                    </div>
+                    <div style={{background:"#06090f",border:"1px solid #1a2233",borderRadius:8,padding:"8px 10px"}}>
+                      <EquityCurve points={[0,...curve]}/>
+                    </div>
+                  </div>
+                )}
                 <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
                   {[
-                    ["Win Rate",`${wr}%`,wr>=50?"#4ade80":"#f87171",`${wins}W / ${cl.length-wins}L`],
+                    ["Win Rate",wr===null?"—":`${wr}%`,wr===null?"#6b7280":wr>=50?"#4ade80":"#f87171",`${wins}W / ${losses}L${beStops?` (${beStops} via BE)`:""}`],
+                    ["Profit Factor",pfDisplay,profitFactor===null||profitFactor>=1.5?"#4ade80":profitFactor>=1?"#facc15":"#f87171","profit ÷ loss"],
                     ["Total R",`${totalR>=0?"+":""}${totalR.toFixed(2)}R`,totalR>=0?"#4ade80":"#f87171",`${cl.length} closed`],
                     ["Total $",fmtDollar(totalDollar),totalDollar>=0?"#4ade80":"#f87171","across all trades"],
-                    ["Avg / Trade",`${parseFloat(avgR)>=0?"+":""}${avgR}R`,parseFloat(avgR)>=0?"#4ade80":"#f87171","per closed trade"],
-                    ["Avg $/Trade",fmtDollar(avgDollar),avgDollar>=0?"#4ade80":"#f87171","per closed trade"],
+                    ["Avg / Trade",`${parseFloat(avgR)>=0?"+":""}${avgR}R`,parseFloat(avgR)>=0?"#4ade80":"#f87171",fmtDollar(avgDollar)+" avg"],
+                    ["Best Trade",`${bestTrade>=0?"+":""}${bestTrade.toFixed(2)}R`,bestTrade>=0?"#4ade80":"#f87171","single trade"],
                     ["Open",trades.filter(t=>t.outcome==="Open").length,"#60a5fa","running"],
                   ].map(([k,v,c,sub])=>(
                     <div key={k} style={{background:"#0f1117",borderRadius:8,padding:"12px 14px"}}>
@@ -532,7 +572,7 @@ function App(){
           <div style={{fontSize:11,color:"#6b7280",letterSpacing:2,textTransform:"uppercase",marginBottom:12}}>Monthly Breakdown</div>
           {monthlySummary.length===0&&<div style={{color:"#374151",textAlign:"center",padding:32,fontSize:13}}>No closed trades yet.</div>}
           {monthlySummary.map(([key,m])=>{
-            const wr=m.count?Math.round((m.wins/m.count)*100):0;
+            const wr=m.count?Math.round((m.wins/m.count)*100):null;
             const avgR=m.count?(m.totalR/m.count).toFixed(2):"0.00";
             return(
               <div key={key} style={card}>
@@ -547,7 +587,7 @@ function App(){
                   </div>
                 </div>
                 <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:8,marginBottom:10}}>
-                  {[["Win Rate",`${wr}%`,wr>=50?"#4ade80":"#f87171"],["Wins",m.wins,"#4ade80"],["Losses",m.losses,"#f87171"],["Avg R",`${parseFloat(avgR)>=0?"+":""}${avgR}R`,parseFloat(avgR)>=0?"#4ade80":"#f87171"]].map(([k,v,c])=>(
+                  {[["Win Rate",wr===null?"—":`${wr}%`,wr===null?"#6b7280":wr>=50?"#4ade80":"#f87171"],["Wins",m.wins,"#4ade80"],["Losses",m.losses,"#f87171"],["Avg R",`${parseFloat(avgR)>=0?"+":""}${avgR}R`,parseFloat(avgR)>=0?"#4ade80":"#f87171"]].map(([k,v,c])=>(
                     <div key={k} style={{background:"#0f1117",borderRadius:7,padding:"9px 10px",textAlign:"center"}}>
                       <div style={{fontSize:16,fontWeight:800,color:c}}>{v}</div>
                       <div style={{fontSize:9,color:"#6b7280",marginTop:2}}>{k}</div>
@@ -556,7 +596,7 @@ function App(){
                 </div>
                 <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
                   {m.betp>0&&<Badge color="teal">{m.betp} × BE → TP</Badge>}
-                  {m.beStop>0&&<Badge color="yellow">{m.beStop} × BE Stopped (+1.08R each)</Badge>}
+                  {m.beStop>0&&<Badge color="yellow">{m.beStop} × BE Stopped ({m.beStopR>=0?"+":""}{m.beStopR.toFixed(2)}R total)</Badge>}
                 </div>
               </div>
             );
