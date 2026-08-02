@@ -208,9 +208,10 @@ function App(){
   const[editId,setEditId]=useState(null);
   const[resetArm,setResetArm]=useState(false);
   const[importMsg,setImportMsg]=useState("");
-  const[filterStrategy,setFilterStrategy]=useState("All");
-  const[filterInstrument,setFilterInstrument]=useState("All");
-  const[filterOutcome,setFilterOutcome]=useState("All");
+  const[expandedDate,setExpandedDate]=useState(null);
+  const now=new Date();
+  const[calYear,setCalYear]=useState(now.getFullYear());
+  const[calMonth,setCalMonth]=useState(now.getMonth());
   const emptyForm=()=>({date:new Date().toISOString().slice(0,10),instrument:"XAUUSD",strategy:"OB Pullback",session:"London",entry:"",sl:"",tp:"",riskAmount:"",partialHit:false,outcome:"Open",supportPrice:"",notes:""});
   const[form,setForm]=useState(emptyForm());
 
@@ -312,13 +313,27 @@ function App(){
     return Object.entries(map).sort((a,b)=>b[0].localeCompare(a[0]));
   })();
 
-  const filteredTrades=trades.filter(t=>
-    (filterStrategy==="All"||t.strategy===filterStrategy)&&
-    (filterInstrument==="All"||t.instrument===filterInstrument)&&
-    (filterOutcome==="All"||t.outcome===filterOutcome)
-  );
-  const usedInstruments=["All",...Array.from(new Set(trades.map(t=>t.instrument)))];
-  const filtersActive=filterStrategy!=="All"||filterInstrument!=="All"||filterOutcome!=="All";
+  const dayMap=(()=>{
+    const m={};
+    trades.forEach(t=>{
+      if(!m[t.date])m[t.date]={count:0,closedR:0,closedDollar:0,hasClosed:false,hasOpen:false};
+      m[t.date].count++;
+      if(t.outcome==="Open")m[t.date].hasOpen=true;
+      else{m[t.date].hasClosed=true;m[t.date].closedR+=(t.pnlR||0);m[t.date].closedDollar+=(t.dollarPnl||0);}
+    });
+    return m;
+  })();
+  const todayStr=now.toISOString().slice(0,10);
+  const calendarDays=(()=>{
+    const daysInMonth=new Date(calYear,calMonth+1,0).getDate();
+    const startWeekday=new Date(calYear,calMonth,1).getDay();
+    const arr=[];
+    for(let i=0;i<startWeekday;i++)arr.push(null);
+    for(let d=1;d<=daysInMonth;d++)arr.push(d);
+    return arr;
+  })();
+  function prevMonth(){calMonth===0?(setCalYear(y=>y-1),setCalMonth(11)):setCalMonth(m=>m-1);}
+  function nextMonth(){calMonth===11?(setCalYear(y=>y+1),setCalMonth(0)):setCalMonth(m=>m+1);}
 
   const card={background:"#0a0e18",border:"1px solid #1a2233",borderRadius:12,padding:18,marginBottom:14};
   const inp={background:"#0f1117",border:"1px solid #1f2937",borderRadius:8,color:"#e5e7eb",padding:"11px 13px",fontSize:15,width:"100%",outline:"none",fontFamily:"monospace"};
@@ -487,70 +502,118 @@ function App(){
           {editId&&<button onClick={()=>{setEditId(null);setForm(emptyForm());}} style={{...saveBtn,background:"transparent",color:"#6b7280",border:"1px solid #1f2937",boxShadow:"none",marginTop:8}}>Cancel</button>}
         </>}
 
-        {/* ═══ HISTORY ═══ */}
+        {/* ═══ HISTORY (CALENDAR) ═══ */}
         {view==="history"&&<>
           {trades.length===0&&<div style={{color:"#374151",textAlign:"center",padding:48,fontSize:13}}>No trades logged yet.</div>}
           {trades.length>0&&(
-            <div style={{...card,padding:14,marginBottom:12}}>
-              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
-                <div style={{fontSize:10,color:"#6b7280",letterSpacing:2,textTransform:"uppercase"}}>Filter</div>
-                {filtersActive&&<button onClick={()=>{setFilterStrategy("All");setFilterInstrument("All");setFilterOutcome("All");}} style={{fontSize:11,color:"#f59e0b",background:"none",border:"none",cursor:"pointer",padding:0}}>Clear</button>}
-              </div>
-              <div style={{fontSize:10,color:"#4b5563",marginBottom:5}}>Strategy</div>
-              <div style={{display:"flex",flexWrap:"wrap",gap:6,marginBottom:10}}>
-                {["All",...STRATEGIES].map(s=>(
-                  <button key={s} onClick={()=>setFilterStrategy(s)} style={{padding:"6px 11px",borderRadius:6,fontSize:12,fontWeight:600,cursor:"pointer",background:filterStrategy===s?"#1a1200":"#0f1117",border:`1px solid ${filterStrategy===s?"#f59e0b":"#1f2937"}`,color:filterStrategy===s?"#f59e0b":"#6b7280"}}>{s}</button>
-                ))}
-              </div>
-              <div style={{fontSize:10,color:"#4b5563",marginBottom:5}}>Instrument</div>
-              <div style={{display:"flex",flexWrap:"wrap",gap:6,marginBottom:10}}>
-                {usedInstruments.map(i=>(
-                  <button key={i} onClick={()=>setFilterInstrument(i)} style={{padding:"6px 11px",borderRadius:6,fontSize:12,fontWeight:600,cursor:"pointer",background:filterInstrument===i?"#1a1200":"#0f1117",border:`1px solid ${filterInstrument===i?"#f59e0b":"#1f2937"}`,color:filterInstrument===i?"#f59e0b":"#6b7280"}}>{i}</button>
-                ))}
-              </div>
-              <div style={{fontSize:10,color:"#4b5563",marginBottom:5}}>Outcome</div>
-              <div style={{display:"flex",flexWrap:"wrap",gap:6}}>
-                {["All","Win","Loss","BE Stopped","BE → TP","Open"].map(o=>(
-                  <button key={o} onClick={()=>setFilterOutcome(o)} style={{padding:"6px 11px",borderRadius:6,fontSize:12,fontWeight:600,cursor:"pointer",background:filterOutcome===o?"#1a1200":"#0f1117",border:`1px solid ${filterOutcome===o?"#f59e0b":"#1f2937"}`,color:filterOutcome===o?"#f59e0b":"#6b7280"}}>{o}</button>
-                ))}
-              </div>
-            </div>
-          )}
-          {trades.length>0&&filteredTrades.length===0&&<div style={{color:"#374151",textAlign:"center",padding:32,fontSize:13}}>No trades match this filter.</div>}
-          {filteredTrades.map(t=>{
-            const oc=ocMap[t.outcome]||"gray";
-            return(
-              <div key={t.id} style={{...card,marginBottom:10}}>
-                <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:10}}>
-                  <div>
-                    <div style={{fontWeight:800,fontSize:17}}>{t.instrument}</div>
-                    <div style={{fontSize:11,color:"#4b5563",marginTop:2}}>{fmtDate(t.date)} · {t.session} · {t.strategy.split("—")[0].trim()} · Risk ${t.riskAmount!=null?t.riskAmount:"—"}</div>
-                  </div>
-                  <div style={{display:"flex",flexDirection:"column",alignItems:"flex-end",gap:5}}>
-                    <Badge color={oc}>{t.outcome}</Badge>
-                    <div style={{display:"flex",gap:5}}>
-                      <RTag v={t.pnlR}/>
-                      <DollarTag d={t.dollarPnl}/>
-                    </div>
-                  </div>
+            <>
+              <div style={card}>
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16}}>
+                  <button onClick={prevMonth} style={{background:"#0f1117",border:"1px solid #1f2937",color:"#f59e0b",fontSize:18,fontWeight:700,cursor:"pointer",padding:"6px 14px",borderRadius:7}}>‹</button>
+                  <div style={{fontWeight:700,fontSize:15}}>{new Date(calYear,calMonth).toLocaleDateString("en-GB",{month:"long",year:"numeric"})}</div>
+                  <button onClick={nextMonth} style={{background:"#0f1117",border:"1px solid #1f2937",color:"#f59e0b",fontSize:18,fontWeight:700,cursor:"pointer",padding:"6px 14px",borderRadius:7}}>›</button>
                 </div>
-                <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",background:"#0f1117",borderRadius:8,padding:"10px 12px",marginBottom:8,gap:4}}>
-                  {[["Entry",t.entry,"#e5e7eb"],["SL",t.sl,"#f87171"],["TP",t.tp,"#4ade80"],["R:R",t.rr?`1:${t.rr}`:"—","#f59e0b"]].map(([k,v,c])=>(
-                    <div key={k} style={{textAlign:"center"}}>
-                      <div style={{fontSize:9,color:"#6b7280",letterSpacing:1,textTransform:"uppercase"}}>{k}</div>
-                      <div style={{fontFamily:"monospace",fontSize:12,fontWeight:600,color:c}}>{v}</div>
-                    </div>
+                <div style={{display:"grid",gridTemplateColumns:"repeat(7,1fr)",gap:4,marginBottom:6}}>
+                  {["Su","Mo","Tu","We","Th","Fr","Sa"].map(d=>(
+                    <div key={d} style={{textAlign:"center",fontSize:10,color:"#4b5563",fontWeight:700,padding:"4px 0"}}>{d}</div>
                   ))}
                 </div>
-                {t.partialHit&&<div style={{marginBottom:8}}><Badge color="yellow">⚡ Partial taken at {(t.strategy==="Gainers"?parseFloat(t.supportPrice):calcBEPrice(t.entry,t.sl))?.toFixed(2)}</Badge></div>}
-                {t.notes&&<div style={{fontSize:12,color:"#4b5563",marginBottom:10,lineHeight:1.5}}>{t.notes}</div>}
-                <div style={{display:"flex",gap:8}}>
-                  <button onClick={()=>handleEdit(t)} style={{flex:1,padding:"7px 0",background:"#0f1117",border:"1px solid #1f2937",color:"#9ca3af",borderRadius:7,fontSize:12,cursor:"pointer",fontWeight:600}}>Edit</button>
-                  <button onClick={()=>handleDelete(t.id)} style={{flex:1,padding:"7px 0",background:"#0f1117",border:"1px solid #dc262640",color:"#f87171",borderRadius:7,fontSize:12,cursor:"pointer",fontWeight:600}}>Delete</button>
+                <div style={{display:"grid",gridTemplateColumns:"repeat(7,1fr)",gap:4}}>
+                  {calendarDays.map((d,i)=>{
+                    if(d===null)return<div key={"e"+i}/>;
+                    const dateStr=`${calYear}-${String(calMonth+1).padStart(2,"0")}-${String(d).padStart(2,"0")}`;
+                    const day=dayMap[dateStr];
+                    const isToday=dateStr===todayStr;
+                    const isExpanded=expandedDate===dateStr;
+                    let bg="#0f1117",bd="#1f2937",tx="#4b5563",rLabel=null,dLabel=null;
+                    if(day){
+                      if(day.hasClosed){
+                        if(day.closedR>0){bg="#052e16";bd="#16a34a";tx="#4ade80";}
+                        else if(day.closedR<0){bg="#2d0a0a";bd="#dc2626";tx="#f87171";}
+                        else{bg="#1c1400";bd="#ca8a04";tx="#facc15";}
+                        rLabel=`${day.closedR>=0?"+":""}${day.closedR.toFixed(1)}R`;
+                        dLabel=fmtDollar(day.closedDollar);
+                      }else if(day.hasOpen){
+                        bg="#0c1a2e";bd="#2563eb";tx="#60a5fa";rLabel="open";
+                      }
+                    }
+                    return(
+                      <button key={d} onClick={()=>day&&setExpandedDate(isExpanded?null:dateStr)} style={{
+                        position:"relative",
+                        minHeight:70,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"flex-start",gap:1,
+                        borderRadius:8,background:bg,padding:"6px 2px",
+                        border:isExpanded?`2px solid ${tx}`:isToday?`1px solid ${day?tx:"#f59e0b"}`:`1px solid ${bd}`,
+                        cursor:day?"pointer":"default",
+                        color:tx,fontSize:12,fontWeight:day?700:500
+                      }}>
+                        {day&&day.hasClosed&&day.hasOpen&&<span style={{position:"absolute",top:4,right:4,width:6,height:6,borderRadius:"50%",background:"#60a5fa",boxShadow:"0 0 0 1px #06090f"}}/>}
+                        <span>{d}</span>
+                        {rLabel&&<span style={{fontSize:9,fontFamily:"monospace",fontWeight:700}}>{rLabel}</span>}
+                        {dLabel&&<span style={{fontSize:8,fontFamily:"monospace",opacity:0.85}}>{dLabel}</span>}
+                        {day&&<span style={{fontSize:7,color:tx,opacity:0.7,fontWeight:500}}>{day.count} trade{day.count===1?"":"s"}</span>}
+                      </button>
+                    );
+                  })}
+                </div>
+                <div style={{display:"flex",gap:12,justifyContent:"center",marginTop:12,flexWrap:"wrap"}}>
+                  {[["#16a34a","Green day"],["#dc2626","Red day"],["#ca8a04","Breakeven"],["#2563eb","Open"]].map(([c,l])=>(
+                    <div key={l} style={{display:"flex",alignItems:"center",gap:5}}>
+                      <span style={{width:8,height:8,borderRadius:2,background:c}}/>
+                      <span style={{fontSize:10,color:"#6b7280"}}>{l}</span>
+                    </div>
+                  ))}
+                  <div style={{display:"flex",alignItems:"center",gap:5}}>
+                    <span style={{width:6,height:6,borderRadius:"50%",background:"#60a5fa"}}/>
+                    <span style={{fontSize:10,color:"#6b7280"}}>also has an open trade</span>
+                  </div>
                 </div>
               </div>
-            );
-          })}
+              {!expandedDate&&<div style={{fontSize:11,color:"#4b5563",textAlign:"center",marginTop:4}}>Tap a marked day to see that day's trades.</div>}
+
+              {expandedDate&&(
+                <div style={{marginTop:14}}>
+                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
+                    <div style={{fontSize:13,fontWeight:700,color:"#f59e0b"}}>📅 {fmtDate(expandedDate)}</div>
+                    <button onClick={()=>setExpandedDate(null)} style={{fontSize:12,color:"#6b7280",background:"none",border:"none",cursor:"pointer",padding:0}}>✕ Close</button>
+                  </div>
+                  {trades.filter(t=>t.date===expandedDate).map(t=>{
+                    const oc=ocMap[t.outcome]||"gray";
+                    return(
+                      <div key={t.id} style={{...card,marginBottom:10}}>
+                        <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:10}}>
+                          <div>
+                            <div style={{fontWeight:800,fontSize:17}}>{t.instrument}</div>
+                            <div style={{fontSize:11,color:"#4b5563",marginTop:2}}>{t.session} · {t.strategy.split("—")[0].trim()} · Risk ${t.riskAmount!=null?t.riskAmount:"—"}</div>
+                          </div>
+                          <div style={{display:"flex",flexDirection:"column",alignItems:"flex-end",gap:5}}>
+                            <Badge color={oc}>{t.outcome}</Badge>
+                            <div style={{display:"flex",gap:5}}>
+                              <RTag v={t.pnlR}/>
+                              <DollarTag d={t.dollarPnl}/>
+                            </div>
+                          </div>
+                        </div>
+                        <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",background:"#0f1117",borderRadius:8,padding:"10px 12px",marginBottom:8,gap:4}}>
+                          {[["Entry",t.entry,"#e5e7eb"],["SL",t.sl,"#f87171"],["TP",t.tp,"#4ade80"],["R:R",t.rr?`1:${t.rr}`:"—","#f59e0b"]].map(([k,v,c])=>(
+                            <div key={k} style={{textAlign:"center"}}>
+                              <div style={{fontSize:9,color:"#6b7280",letterSpacing:1,textTransform:"uppercase"}}>{k}</div>
+                              <div style={{fontFamily:"monospace",fontSize:12,fontWeight:600,color:c}}>{v}</div>
+                            </div>
+                          ))}
+                        </div>
+                        {t.partialHit&&<div style={{marginBottom:8}}><Badge color="yellow">⚡ Partial taken at {(t.strategy==="Gainers"?parseFloat(t.supportPrice):calcBEPrice(t.entry,t.sl))?.toFixed(2)}</Badge></div>}
+                        {t.notes&&<div style={{fontSize:12,color:"#4b5563",marginBottom:10,lineHeight:1.5}}>{t.notes}</div>}
+                        <div style={{display:"flex",gap:8}}>
+                          <button onClick={()=>handleEdit(t)} style={{flex:1,padding:"7px 0",background:"#0f1117",border:"1px solid #1f2937",color:"#9ca3af",borderRadius:7,fontSize:12,cursor:"pointer",fontWeight:600}}>Edit</button>
+                          <button onClick={()=>handleDelete(t.id)} style={{flex:1,padding:"7px 0",background:"#0f1117",border:"1px solid #dc262640",color:"#f87171",borderRadius:7,fontSize:12,cursor:"pointer",fontWeight:600}}>Delete</button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </>
+          )}
         </>}
 
         {/* ═══ MONTHLY ═══ */}
